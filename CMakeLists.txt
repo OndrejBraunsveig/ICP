@@ -22,7 +22,7 @@ elseif(UNIX)
 endif()
 
 file(GLOB_RECURSE PROJECT_SOURCES
-    "${PROJECT_SOURCE_DIR}/src/face_detection.cpp"
+    "${PROJECT_SOURCE_DIR}/src/*.cpp"
 )
 
 add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
