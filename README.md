@@ -1,4 +1,4 @@
-#ICP
+# ICP 2026
 
 Since we are using new model (ONNX model YuNet), without ony optimalizator, it runs 5~ FPS, even on separate thread. 
 
