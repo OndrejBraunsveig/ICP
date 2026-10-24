@@ -1,13 +1,18 @@
-#include "app.hpp"
-
+#include <thread>
+#include <optional>
+#include <atomic>
+#include <iostream>
 #include <algorithm>
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
 
 #include <opencv2/opencv.hpp>
 
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include "fps_meter.hpp"
+#include "app.hpp"
 
 bool App::init()
 {
@@ -47,39 +52,66 @@ bool App::init()
               << ", height=" << capture.get(cv::CAP_PROP_FRAME_HEIGHT) << '\n';
     return true;
 }
-
-int App::run()
+void App::tracker_thread(cv::VideoCapture & capture)
 {
     cv::Mat frame;
-
-    while (true)
+    while (!tracker_stop_source_.stop_requested())
     {
         if (!capture.read(frame) || frame.empty())
         {
             std::cerr << "Camera disconnected or returned an empty frame.\n";
-            return EXIT_FAILURE;
+            no_more_frames = true;
+            break;
         }
 
         const std::optional<cv::Point2f> center = find_face(frame);
-
-        cv::Mat result = frame.clone();
         if (center)
         {
-            std::cout << "Found normalized center: " << *center << '\n';
-            draw_cross_normalized(result, *center, 30);
+          face_found = true; 
+          latest_frame = std::make_shared<const cv::Mat>(frame.clone());
+          normalized_coordinates = NormalizedCoordinates{center->x, center->y};
         }
         else
         {
-            std::cout << "No face detected.\n";
+            face_found = false;
         }
-
-        cv::imshow("Face detection", result);
-
-        if (cv::pollKey() == 27)
-            break;
     }
+}
 
-    return EXIT_SUCCESS;
+int App::run()
+{
+  fps_meter FPS;
+  std::jthread tracker_thread(&App::tracker_thread, this, std::ref(capture));
+  while(true){
+    
+    std::optional<cv::Point2f> center;
+    const auto frame = latest_frame.load();
+    cv::Mat result = frame ? *frame : cv::Mat::zeros(480, 640, CV_8UC3);
+    if (face_found)
+    {
+      std::cout << "Face found at normalized coordinates: "
+      << normalized_coordinates.load().x << ", "
+      << normalized_coordinates.load().y << '\n';
+      center = cv::Point2f(normalized_coordinates.load().x, normalized_coordinates.load().y);
+      draw_cross_normalized(result, *center, 30);
+    }
+    else
+    {
+      std::cout << "No face detected.\n";
+    }
+    cv::imshow("Face detection", result);
+    
+    if (FPS.is_updated()) // display new value only once per interval (default = 1.0s)
+			std::cout << "FPS: " << FPS.get() << std::endl;
+            
+		FPS.update();
+
+    if (cv::pollKey() == 27)
+      break;
+  }   
+
+  tracker_stop_source_.request_stop();
+  return EXIT_SUCCESS;
 }
 
 void App::draw_cross_normalized(
@@ -101,6 +133,7 @@ void App::draw_cross_normalized(
     cv::line(image, p1, p2, CV_RGB(255, 0, 0), 3);
     cv::line(image, p3, p4, CV_RGB(255, 0, 0), 3);
 }
+
 std::optional<cv::Point2f> App::find_face(const cv::Mat& frame)
 {
     face_detector->setInputSize(frame.size());
