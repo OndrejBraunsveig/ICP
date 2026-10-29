@@ -22,8 +22,9 @@ elseif(UNIX)
 endif()
 
 file(GLOB_RECURSE PROJECT_SOURCES
-    "${PROJECT_SOURCE_DIR}/src/*.cpp"
-    #"${PROJECT_SOURCE_DIR}/demos/04lab/04-conditional_variable.cpp"
+#"${PROJECT_SOURCE_DIR}/demos/04lab/04-conditional_variable.cpp"
+"${PROJECT_SOURCE_DIR}/demos/06lab/*.cpp"
+#"${PROJECT_SOURCE_DIR}/src/*.cpp"
 )
 
 add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
