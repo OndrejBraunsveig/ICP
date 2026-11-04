@@ -17,7 +17,10 @@ public:
 
     bool init(void);
     
-    CompressionResult lossy_bw_limit(cv::Mat& input_img, size_t size_limit);
+    CompressionResult lossy_bw_limit(
+        cv::Mat& input_img,
+        size_t size_limit,
+        bool print_progress);
 
     int run(void);
 
