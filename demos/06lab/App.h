@@ -31,5 +31,6 @@ private:
     cv::VideoCapture capture;
     double bandwidth_limit_mbps = 5.0;
     double stream_fps = 30.0;
+    int jpeg_quality_hint = 100;
 };
 

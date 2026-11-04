@@ -12,6 +12,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "App.h"
+#include "JpegEncoder.h"
 #include "src/fps_meter.hpp"
 
 App::App()
@@ -52,68 +53,72 @@ App::CompressionResult App::lossy_bw_limit(
     size_t size_limit,
     bool print_progress)
 {
-    std::string suff(".jpg"); // target format
-    if (!cv::haveImageWriter(suff))
-        throw std::runtime_error("Can not compress to format:" + suff);
+    if (!cv::haveImageWriter(".jpg"))
+        throw std::runtime_error("Can not compress to format: .jpg");
 
     CompressionResult result;
-    std::vector<int> compression_params;
-
-    // prepare parameters for JPEG compressor
-    // we use only quality, but other parameters are available (progressive, optimization...)
-    std::vector<int> compression_params_template;
-    compression_params_template.push_back(cv::IMWRITE_JPEG_QUALITY); 
 
     if (print_progress)
         std::cout << '[';
 
-    // JPEG size generally grows with quality, so binary search can find the
-    // highest quality that fits in about seven attempts instead of up to 20.
-    int lowest_quality = 1;
-    int highest_quality = 100;
     int fallback_quality = 101;
     std::vector<uchar> fallback_bytes;
     double fallback_encode_ms = 0.0;
 
-    while (lowest_quality <= highest_quality) {
-        const int quality = lowest_quality +
-            (highest_quality - lowest_quality) / 2;
+    // Consecutive camera frames are usually similar, so first try the quality
+    // selected for the previous frame. Most stable frames need one encode.
+    const int initial_quality = std::clamp(jpeg_quality_hint, 1, 100);
+    if (print_progress)
+        std::cout << initial_quality << ',';
 
-        compression_params = compression_params_template; // reset parameters
-        compression_params.push_back(quality);             // set desired quality
-        if (print_progress)
-            std::cout << quality << ',';
+    jpeg::EncodedCandidate initial =
+        jpeg::encode_at_quality(input_img, initial_quality);
+    result.total_encode_ms += initial.encode_ms;
+    ++result.attempts;
 
-        // try to encode
-        std::vector<uchar> candidate_bytes;
-        const auto encode_start = std::chrono::steady_clock::now();
-        cv::imencode(suff, input_img, candidate_bytes, compression_params);
-        const auto encode_end = std::chrono::steady_clock::now();
+    fallback_quality = initial.quality;
+    fallback_bytes = initial.bytes;
+    fallback_encode_ms = initial.encode_ms;
 
-        const double candidate_encode_ms =
-            std::chrono::duration<double, std::milli>(encode_end - encode_start).count();
-        result.total_encode_ms += candidate_encode_ms;
-        ++result.attempts;
+    if (initial.bytes.size() <= size_limit) {
+        result.bytes = std::move(initial.bytes);
+        result.final_encode_ms = initial.encode_ms;
+        result.jpeg_quality = initial.quality;
+        result.within_size_limit = true;
+    }
+    else {
+        // The previous quality no longer fits. Binary-search only the lower
+        // part of the range for the highest quality that does fit.
+        int lowest_quality = 1;
+        int highest_quality = initial_quality - 1;
 
-        // Retain the lowest-quality attempt as a fallback for limits that
-        // cannot be reached even at JPEG quality 1.
-        if (quality < fallback_quality) {
-            fallback_quality = quality;
-            fallback_bytes = candidate_bytes;
-            fallback_encode_ms = candidate_encode_ms;
-        }
+        while (lowest_quality <= highest_quality) {
+            const int quality = lowest_quality +
+                (highest_quality - lowest_quality) / 2;
+            if (print_progress)
+                std::cout << quality << ',';
 
-        if (candidate_bytes.size() <= size_limit) {
-            // This candidate fits. Save it and try a higher quality.
-            result.bytes = std::move(candidate_bytes);
-            result.final_encode_ms = candidate_encode_ms;
-            result.jpeg_quality = quality;
-            result.within_size_limit = true;
-            lowest_quality = quality + 1;
-        }
-        else {
-            // The candidate is too large, so only lower qualities can fit.
-            highest_quality = quality - 1;
+            jpeg::EncodedCandidate candidate =
+                jpeg::encode_at_quality(input_img, quality);
+            result.total_encode_ms += candidate.encode_ms;
+            ++result.attempts;
+
+            if (quality < fallback_quality) {
+                fallback_quality = quality;
+                fallback_bytes = candidate.bytes;
+                fallback_encode_ms = candidate.encode_ms;
+            }
+
+            if (candidate.bytes.size() <= size_limit) {
+                result.bytes = std::move(candidate.bytes);
+                result.final_encode_ms = candidate.encode_ms;
+                result.jpeg_quality = candidate.quality;
+                result.within_size_limit = true;
+                lowest_quality = quality + 1;
+            }
+            else {
+                highest_quality = quality - 1;
+            }
         }
     }
 
@@ -122,6 +127,8 @@ App::CompressionResult App::lossy_bw_limit(
         result.final_encode_ms = fallback_encode_ms;
         result.jpeg_quality = fallback_quality;
     }
+
+    jpeg_quality_hint = result.jpeg_quality;
 
     if (print_progress)
         std::cout << "]\n";
@@ -133,6 +140,7 @@ void App::adjust_bandwidth(double change_mbps)
 {
     bandwidth_limit_mbps =
         std::clamp(bandwidth_limit_mbps + change_mbps, 0.1, 100.0);
+    jpeg_quality_hint = 100;
 
     std::cout << "Bandwidth limit changed to " << bandwidth_limit_mbps
               << " Mbit/s\n";
@@ -144,6 +152,7 @@ int App::run(void)
     fps_meter frame_rate_meter;
     auto last_status_report =
         std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    auto last_quality_refresh = std::chrono::steady_clock::now();
 
     // OpenCV supplies key codes through pollKey(). The map dispatches each
     // supported key to its callback.
@@ -168,6 +177,13 @@ int App::run(void)
             const auto now = std::chrono::steady_clock::now();
             const bool print_status =
                 now - last_status_report >= std::chrono::seconds(10);
+
+            // Periodically search from quality 100 so image quality can rise
+            // after the scene becomes easier to compress.
+            if (now - last_quality_refresh >= std::chrono::seconds(3)) {
+                jpeg_quality_hint = 100;
+                last_quality_refresh = now;
+            }
 
             // Convert Mbit/s to the maximum number of JPEG bytes per frame:
             // Mbit/s * 1,000,000 bit/Mbit / 8 bit/byte / frames/s.
