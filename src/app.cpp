@@ -78,9 +78,8 @@ void App::tracker_thread(cv::VideoCapture & capture)
     }
 }
 
-int App::run()
-{
-  fps_meter FPS;
+void App::run_camera(){
+    fps_meter FPS;
   std::jthread tracker_thread(&App::tracker_thread, this, std::ref(capture));
   while(true){
     
@@ -111,7 +110,144 @@ int App::run()
   }   
 
   tracker_stop_source_.request_stop();
-  return EXIT_SUCCESS;
+}
+static void error_callback(int error, const char* description)
+{
+    fprintf(stderr, "Error: %s\n", description);
+}
+static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+}
+
+void App::print_GLEW_info()
+{
+    const GLubyte* vendor = (const GLubyte*)glGetString(GL_VENDOR);
+
+    if (vendor == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Vendor:" << vendor << '\n';
+
+    const GLubyte* renderer = (const GLubyte*)glGetString(GL_RENDERER);
+
+    if (renderer == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Renderer:" << renderer << '\n';
+
+    const GLubyte* version = (const GLubyte*)glGetString(GL_VERSION);
+
+    if (version == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Version:" << version << '\n';
+
+    const GLubyte* shading_language_version = (const GLubyte*)glGetString(GL_SHADING_LANGUAGE_VERSION);
+
+    if (shading_language_version == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Shading Language Version:" << shading_language_version << '\n';
+
+    GLint gl_major_version;
+    glGetIntegerv(GL_MAJOR_VERSION, &gl_major_version);
+
+    std::cout << "Value of gl_major_version:" << gl_major_version << '\n';
+
+    GLint gl_minor_version;
+    glGetIntegerv(GL_MINOR_VERSION, &gl_minor_version);
+
+    std::cout << "Value of gl_minor_version:" << gl_minor_version << '\n';
+
+
+    GLint gl_context_profile_info;
+    glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &gl_context_profile_info);
+
+    if ( gl_context_profile_info & GL_CONTEXT_CORE_PROFILE_BIT ) {
+        std::cout << "We are using CORE profile\n";
+    } else {
+        if ( gl_context_profile_info & GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) {    
+            std::cout << "We are using COMPATIBILITY profile\n";
+        } else {
+                throw std::runtime_error("What??");
+        }
+    }
+
+    GLint context_flags = 0;
+    glGetIntegerv(GL_CONTEXT_FLAGS, &context_flags);
+
+    if (context_flags & GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT)
+        std::cout << "Forward-compatible context\n";
+
+    if (context_flags & GL_CONTEXT_FLAG_DEBUG_BIT)
+        std::cout << "Debug context\n";
+
+    if (context_flags & GL_CONTEXT_FLAG_ROBUST_ACCESS_BIT)
+        std::cout << "Robust access enabled\n";
+
+    if (context_flags & GL_CONTEXT_FLAG_NO_ERROR_BIT)
+        std::cout << "No-error context\n";
+}
+int App::run()
+{
+
+    GLFWwindow* window;
+    /* Initialize the library */
+    if (!glfwInit())
+    return -1;
+    
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    /* Create a windowed mode window and its OpenGL context */
+    window = glfwCreateWindow(640, 480, "Hello World", NULL, NULL);
+    if (!window)
+    {
+        glfwTerminate();
+        return -1;
+    }
+    
+    /* Make the window's context current */
+    glfwMakeContextCurrent(window);
+
+    // initialize GLEW
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK)
+    {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+
+    //Register callbacks
+    glfwSetErrorCallback(error_callback);
+    glfwSetKeyCallback(window, key_callback);
+    //print glew info of the current window
+    print_GLEW_info();
+    
+    
+    /* Loop until the user closes the window */
+    while (!glfwWindowShouldClose(window))
+    {
+        /* Render here */
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        /* ... more draw-calls ... */
+        /* ... */
+        /* ... */
+        
+        /* Swap front and back buffers */
+        glfwSwapBuffers(window);
+
+        /* Poll for and process events */
+        glfwPollEvents();
+    }
+
+    glfwTerminate();
+    return 0;
 }
 
 void App::draw_cross_normalized(

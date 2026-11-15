@@ -6,6 +6,8 @@
 #include <opencv2/core.hpp>
 #include <opencv2/objdetect/face.hpp>
 #include <opencv2/videoio.hpp>
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
 
 class App {
 public:
@@ -16,6 +18,8 @@ public:
     int run();
 
 private:
+    void run_camera();
+    void print_GLEW_info();
     std::optional<cv::Point2f> find_face(const cv::Mat& frame);
     void tracker_thread(cv::VideoCapture & capture);
     void draw_cross_normalized(
@@ -24,21 +28,24 @@ private:
         int size);
     cv::VideoCapture capture;
     std::stop_source tracker_stop_source_;
-
+        
     std::atomic<bool> no_more_frames{false};
     std::atomic<bool> face_found{false};
-
+        
     struct NormalizedCoordinates
     {
         float x;
         float y;
     };
     std::atomic<std::shared_ptr<const cv::Mat>> latest_frame{
-    nullptr
-};
-
+        nullptr
+    };
+        
     std::atomic<NormalizedCoordinates> normalized_coordinates{
         NormalizedCoordinates{0.0f, 0.0f}};
-    
-    cv::Ptr<cv::FaceDetectorYN> face_detector;
-};
+            
+        cv::Ptr<cv::FaceDetectorYN> face_detector;
+    };
+    //Callbacks
+    static void error_callback(int error, const char* description);
+    static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
