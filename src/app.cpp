@@ -6,16 +6,15 @@
 #include <cstdlib>
 #include <chrono>
 #include <iostream>
-
 #include <opencv2/opencv.hpp>
-
+#include <string>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include "fps_meter.hpp"
 #include "app.hpp"
 
-bool App::init()
-{
+GLFWwindow* window;
+bool App::init_camera(){
     constexpr const char* model_path =
         "resources/face_detection_yunet_2023mar.onnx";
 
@@ -50,8 +49,9 @@ bool App::init()
 
     std::cout << "Camera: width=" << capture.get(cv::CAP_PROP_FRAME_WIDTH)
               << ", height=" << capture.get(cv::CAP_PROP_FRAME_HEIGHT) << '\n';
-    return true;
+              return true;
 }
+
 void App::tracker_thread(cv::VideoCapture & capture)
 {
     cv::Mat frame;
@@ -111,7 +111,7 @@ void App::run_camera(){
 
   tracker_stop_source_.request_stop();
 }
-static void error_callback(int error, const char* description)
+void App::error_callback(int error, const char* description)
 {
     fprintf(stderr, "Error: %s\n", description);
 }
@@ -120,7 +120,54 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
-
+void APIENTRY App::gl_debug_callback(
+    GLenum source,
+    GLenum type,
+    GLuint id,
+    GLenum severity,
+    GLsizei length,
+    const GLchar* message,
+    const void* userParam)
+{
+    std::cerr << "OpenGL debug message [" << id << "]: "
+              << message << '\n';
+}
+void App::glfw_cursor_position_callback(GLFWwindow* window, double xpos, double ypos){
+    std::cout << "Mouse moved to: (" << xpos << ", " << ypos << ")\n";
+}
+void App::glfw_scroll_callback(GLFWwindow* window, double xoffset, double yoffset){
+    std::cout << "Mouse scrolled: (" << xoffset << ", " << yoffset << ")\n";
+}
+void App::glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods){
+    if (action == GLFW_PRESS)
+        std::cout << "Mouse button pressed: " << button << '\n';
+    else if (action == GLFW_RELEASE)
+        std::cout << "Mouse button released: " << button << '\n';
+}
+void App::glfw_framebuffer_size_callback(GLFWwindow* window, int width, int height){
+    std::cout << "Framebuffer resized to: " << width << "x" << height << '\n';
+}
+void App::glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods){
+    App* this_inst = static_cast<App*>(glfwGetWindowUserPointer(window));
+    if (!this_inst)
+    return;
+    if ((action == GLFW_PRESS) || (action == GLFW_REPEAT))
+    {
+        switch (key)
+        {
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            break;
+        case GLFW_KEY_V:
+           this_inst->is_vsync_on = !this_inst->is_vsync_on;
+			glfwSwapInterval(this_inst->is_vsync_on);
+			std::cout << "VSync: " << this_inst->is_vsync_on << "\n";
+            break;  
+        default:
+            break;
+        }
+    }
+}
 void App::print_GLEW_info()
 {
     const GLubyte* vendor = (const GLubyte*)glGetString(GL_VENDOR);
@@ -190,45 +237,63 @@ void App::print_GLEW_info()
     if (context_flags & GL_CONTEXT_FLAG_NO_ERROR_BIT)
         std::cout << "No-error context\n";
 }
-int App::run()
-{
 
-    GLFWwindow* window;
+bool App::init()
+{
+    
     /* Initialize the library */
     if (!glfwInit())
-    return -1;
+        return false;
     
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
+    
+    glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
     /* Create a windowed mode window and its OpenGL context */
-    window = glfwCreateWindow(640, 480, "Hello World", NULL, NULL);
+    window = glfwCreateWindow(640, 480, "OpenGL - Window created", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
-        return -1;
+        return false;
     }
-    
+    glfwSetWindowUserPointer(window, this);
     /* Make the window's context current */
     glfwMakeContextCurrent(window);
-
+    
     // initialize GLEW
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK)
     {
         glfwDestroyWindow(window);
         glfwTerminate();
-        return -1;
+        return false;
     }
-
+    //Allow OpenGL debug output
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(gl_debug_callback, nullptr);
     //Register callbacks
     glfwSetErrorCallback(error_callback);
-    glfwSetKeyCallback(window, key_callback);
+    glfwSetKeyCallback(window, glfw_key_callback);
+    
+    glfwSetFramebufferSizeCallback(window, glfw_framebuffer_size_callback);
+    glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
+    glfwSetCursorPosCallback(window, glfw_cursor_position_callback);
+    glfwSetScrollCallback(window, glfw_scroll_callback);
+    
+    // vsync
+    glfwSwapInterval(is_vsync_on?1:0);
+
+    
     //print glew info of the current window
     print_GLEW_info();
     
-    
+    return true;
+}
+int App::run()
+{
+    fps_meter FPS;
     /* Loop until the user closes the window */
     while (!glfwWindowShouldClose(window))
     {
@@ -244,6 +309,14 @@ int App::run()
 
         /* Poll for and process events */
         glfwPollEvents();
+
+        //Measure FPS
+        FPS.update();
+        if (FPS.is_updated())
+        {
+            std::string title = "OpenGL - FPS: " + std::to_string(static_cast<int>(FPS.get()));
+            glfwSetWindowTitle(window, title.c_str());
+        }
     }
 
     glfwTerminate();
