@@ -6,16 +6,15 @@
 #include <cstdlib>
 #include <chrono>
 #include <iostream>
-
 #include <opencv2/opencv.hpp>
-
+#include <string>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include "fps_meter.hpp"
 #include "app.hpp"
 
-bool App::init()
-{
+GLFWwindow* window;
+bool App::init_camera(){
     constexpr const char* model_path =
         "resources/face_detection_yunet_2023mar.onnx";
 
@@ -50,8 +49,9 @@ bool App::init()
 
     std::cout << "Camera: width=" << capture.get(cv::CAP_PROP_FRAME_WIDTH)
               << ", height=" << capture.get(cv::CAP_PROP_FRAME_HEIGHT) << '\n';
-    return true;
+              return true;
 }
+
 void App::tracker_thread(cv::VideoCapture & capture)
 {
     cv::Mat frame;
@@ -78,9 +78,8 @@ void App::tracker_thread(cv::VideoCapture & capture)
     }
 }
 
-int App::run()
-{
-  fps_meter FPS;
+void App::run_camera(){
+    fps_meter FPS;
   std::jthread tracker_thread(&App::tracker_thread, this, std::ref(capture));
   while(true){
     
@@ -111,7 +110,217 @@ int App::run()
   }   
 
   tracker_stop_source_.request_stop();
-  return EXIT_SUCCESS;
+}
+void App::error_callback(int error, const char* description)
+{
+    fprintf(stderr, "Error: %s\n", description);
+}
+static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+}
+void APIENTRY App::gl_debug_callback(
+    GLenum source,
+    GLenum type,
+    GLuint id,
+    GLenum severity,
+    GLsizei length,
+    const GLchar* message,
+    const void* userParam)
+{
+    std::cerr << "OpenGL debug message [" << id << "]: "
+              << message << '\n';
+}
+void App::glfw_cursor_position_callback(GLFWwindow* window, double xpos, double ypos){
+    std::cout << "Mouse moved to: (" << xpos << ", " << ypos << ")\n";
+}
+void App::glfw_scroll_callback(GLFWwindow* window, double xoffset, double yoffset){
+    std::cout << "Mouse scrolled: (" << xoffset << ", " << yoffset << ")\n";
+}
+void App::glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods){
+    if (action == GLFW_PRESS)
+        std::cout << "Mouse button pressed: " << button << '\n';
+    else if (action == GLFW_RELEASE)
+        std::cout << "Mouse button released: " << button << '\n';
+}
+void App::glfw_framebuffer_size_callback(GLFWwindow* window, int width, int height){
+    std::cout << "Framebuffer resized to: " << width << "x" << height << '\n';
+}
+void App::glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods){
+    App* this_inst = static_cast<App*>(glfwGetWindowUserPointer(window));
+    if (!this_inst)
+    return;
+    if ((action == GLFW_PRESS) || (action == GLFW_REPEAT))
+    {
+        switch (key)
+        {
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            break;
+        case GLFW_KEY_V:
+           this_inst->is_vsync_on = !this_inst->is_vsync_on;
+			glfwSwapInterval(this_inst->is_vsync_on);
+			std::cout << "VSync: " << this_inst->is_vsync_on << "\n";
+            break;  
+        default:
+            break;
+        }
+    }
+}
+void App::print_GLEW_info()
+{
+    const GLubyte* vendor = (const GLubyte*)glGetString(GL_VENDOR);
+
+    if (vendor == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Vendor:" << vendor << '\n';
+
+    const GLubyte* renderer = (const GLubyte*)glGetString(GL_RENDERER);
+
+    if (renderer == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Renderer:" << renderer << '\n';
+
+    const GLubyte* version = (const GLubyte*)glGetString(GL_VERSION);
+
+    if (version == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Version:" << version << '\n';
+
+    const GLubyte* shading_language_version = (const GLubyte*)glGetString(GL_SHADING_LANGUAGE_VERSION);
+
+    if (shading_language_version == nullptr)
+        std::cout << "<Unknown>\n";
+    else 
+        std::cout << "Shading Language Version:" << shading_language_version << '\n';
+
+    GLint gl_major_version;
+    glGetIntegerv(GL_MAJOR_VERSION, &gl_major_version);
+
+    std::cout << "Value of gl_major_version:" << gl_major_version << '\n';
+
+    GLint gl_minor_version;
+    glGetIntegerv(GL_MINOR_VERSION, &gl_minor_version);
+
+    std::cout << "Value of gl_minor_version:" << gl_minor_version << '\n';
+
+
+    GLint gl_context_profile_info;
+    glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &gl_context_profile_info);
+
+    if ( gl_context_profile_info & GL_CONTEXT_CORE_PROFILE_BIT ) {
+        std::cout << "We are using CORE profile\n";
+    } else {
+        if ( gl_context_profile_info & GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) {    
+            std::cout << "We are using COMPATIBILITY profile\n";
+        } else {
+                throw std::runtime_error("What??");
+        }
+    }
+
+    GLint context_flags = 0;
+    glGetIntegerv(GL_CONTEXT_FLAGS, &context_flags);
+
+    if (context_flags & GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT)
+        std::cout << "Forward-compatible context\n";
+
+    if (context_flags & GL_CONTEXT_FLAG_DEBUG_BIT)
+        std::cout << "Debug context\n";
+
+    if (context_flags & GL_CONTEXT_FLAG_ROBUST_ACCESS_BIT)
+        std::cout << "Robust access enabled\n";
+
+    if (context_flags & GL_CONTEXT_FLAG_NO_ERROR_BIT)
+        std::cout << "No-error context\n";
+}
+
+bool App::init()
+{
+    
+    /* Initialize the library */
+    if (!glfwInit())
+        return false;
+    
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    
+    glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+    /* Create a windowed mode window and its OpenGL context */
+    window = glfwCreateWindow(640, 480, "OpenGL - Window created", NULL, NULL);
+    if (!window)
+    {
+        glfwTerminate();
+        return false;
+    }
+    glfwSetWindowUserPointer(window, this);
+    /* Make the window's context current */
+    glfwMakeContextCurrent(window);
+    
+    // initialize GLEW
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK)
+    {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return false;
+    }
+    //Allow OpenGL debug output
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(gl_debug_callback, nullptr);
+    //Register callbacks
+    glfwSetErrorCallback(error_callback);
+    glfwSetKeyCallback(window, glfw_key_callback);
+    
+    glfwSetFramebufferSizeCallback(window, glfw_framebuffer_size_callback);
+    glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
+    glfwSetCursorPosCallback(window, glfw_cursor_position_callback);
+    glfwSetScrollCallback(window, glfw_scroll_callback);
+    
+    // vsync
+    glfwSwapInterval(is_vsync_on?1:0);
+
+    
+    //print glew info of the current window
+    print_GLEW_info();
+    
+    return true;
+}
+int App::run()
+{
+    fps_meter FPS;
+    /* Loop until the user closes the window */
+    while (!glfwWindowShouldClose(window))
+    {
+        /* Render here */
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        /* ... more draw-calls ... */
+        /* ... */
+        /* ... */
+        
+        /* Swap front and back buffers */
+        glfwSwapBuffers(window);
+
+        /* Poll for and process events */
+        glfwPollEvents();
+
+        //Measure FPS
+        FPS.update();
+        if (FPS.is_updated())
+        {
+            std::string title = "OpenGL - FPS: " + std::to_string(static_cast<int>(FPS.get()));
+            glfwSetWindowTitle(window, title.c_str());
+        }
+    }
+
+    glfwTerminate();
+    return 0;
 }
 
 void App::draw_cross_normalized(
