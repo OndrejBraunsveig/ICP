@@ -12,6 +12,8 @@
 #include <GLFW/glfw3.h>
 #include "assets.hpp"
 
+struct ImGuiContext;
+
 class App {
     public:
     App() = default;
@@ -25,6 +27,7 @@ class App {
     void run_camera();
     void print_GLEW_info();
     bool init_assets();
+    bool init_imgui();
     std::optional<cv::Point2f> find_face(const cv::Mat& frame);
     void tracker_thread(cv::VideoCapture & capture);
     void draw_cross_normalized(
@@ -54,6 +57,8 @@ class App {
 
     //new GL stuff
     GLFWwindow* window = nullptr;
+    ImGuiContext* imgui_context = nullptr;
+    bool show_imgui{true};
 
     GLuint shader_prog_ID{ 0 };
     GLuint VBO_ID{ 0 };

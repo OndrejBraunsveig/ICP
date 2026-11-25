@@ -9,13 +9,15 @@
 #include <chrono>
 #include <stack>
 #include <random>
-#include <iostream>
 #include <opencv2/opencv.hpp>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_opengl3.h>
 #include <string>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -162,33 +164,40 @@ void App::glfw_scroll_callback(GLFWwindow* window, double xoffset, double yoffse
     std::cout << "Mouse scrolled: (" << xoffset << ", " << yoffset << ")\n";
 }
 void App::glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods){
-    if (action == GLFW_PRESS)
-        std::cout << "Mouse button pressed: " << button << '\n';
-    else if (action == GLFW_RELEASE)
-        std::cout << "Mouse button released: " << button << '\n';
+    if (action != GLFW_PRESS)
+        return;
+
+    if (button == GLFW_MOUSE_BUTTON_LEFT && glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_NORMAL)
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    else if (button == GLFW_MOUSE_BUTTON_RIGHT)
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 }
 void App::glfw_framebuffer_size_callback(GLFWwindow* window, int width, int height){
     std::cout << "Framebuffer resized to: " << width << "x" << height << '\n';
 }
 void App::glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods){
-    App* this_inst = static_cast<App*>(glfwGetWindowUserPointer(window));
-    if (!this_inst)
-    return;
-    if ((action == GLFW_PRESS) || (action == GLFW_REPEAT))
+    auto* app = static_cast<App*>(glfwGetWindowUserPointer(window));
+    if (!app || action != GLFW_PRESS)
+        return;
+
+    switch (key)
     {
-        switch (key)
-        {
-        case GLFW_KEY_ESCAPE:
+    case GLFW_KEY_ESCAPE:
+        if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        else
             glfwSetWindowShouldClose(window, GLFW_TRUE);
-            break;
-        case GLFW_KEY_V:
-           this_inst->is_vsync_on = !this_inst->is_vsync_on;
-			glfwSwapInterval(this_inst->is_vsync_on);
-			std::cout << "VSync: " << this_inst->is_vsync_on << "\n";
-            break;  
-        default:
-            break;
-        }
+        break;
+    case GLFW_KEY_V:
+        app->is_vsync_on = !app->is_vsync_on;
+        glfwSwapInterval(app->is_vsync_on ? 1 : 0);
+        std::cout << "VSync: " << app->is_vsync_on << '\n';
+        break;
+    case GLFW_KEY_D:
+        app->show_imgui = !app->show_imgui;
+        break;
+    default:
+        break;
     }
 }
 void App::print_GLEW_info()
@@ -264,7 +273,7 @@ void App::print_GLEW_info()
 bool App::init()
 {
     
-    /* Initialize the library */
+    glfwSetErrorCallback(error_callback);
     if (!glfwInit())
         return false;
     
@@ -273,8 +282,8 @@ bool App::init()
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
-    /* Create a windowed mode window and its OpenGL context */
-    window = glfwCreateWindow(640, 480, "OpenGL - Window created", NULL, NULL);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    window = glfwCreateWindow(640, 480, "OpenGL - FPS: measuring...", nullptr, nullptr);
     if (!window)
     {
         glfwTerminate();
@@ -296,7 +305,6 @@ bool App::init()
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
     glDebugMessageCallback(gl_debug_callback, nullptr);
     //Register callbacks
-    glfwSetErrorCallback(error_callback);
     glfwSetKeyCallback(window, glfw_key_callback);
     
     glfwSetFramebufferSizeCallback(window, glfw_framebuffer_size_callback);
@@ -311,7 +319,29 @@ bool App::init()
     //print glew info of the current window
     print_GLEW_info();
     
-    return init_assets();
+    if (!init_assets() || !init_imgui())
+        return false;
+
+    glfwShowWindow(window);
+    return true;
+}
+
+bool App::init_imgui()
+{
+    IMGUI_CHECKVERSION();
+    imgui_context = ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    ImGui::StyleColorsDark();
+
+    // Install the ImGui callbacks after GLFW's app callbacks so ImGui can chain them.
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, true) ||
+        !ImGui_ImplOpenGL3_Init("#version 460 core") ||
+        !ImGui_ImplOpenGL3_CreateDeviceObjects())
+    {
+        std::cerr << "Could not initialize ImGui.\n";
+        return false;
+    }
+    return true;
 }
 
 bool App::init_assets()
@@ -377,6 +407,7 @@ void main()
 int App::run()
 {
     fps_meter FPS;
+    bool has_fps_sample = false;
     const GLint transform_location = glGetUniformLocation(shader_prog_ID, "transform");
     const auto model_view = glm::rotate(
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -2.0f)),
@@ -402,6 +433,34 @@ int App::run()
         glUniformMatrix4fv(transform_location, 1, GL_FALSE, glm::value_ptr(transform));
         glBindVertexArray(VAO_ID);
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangle_vertices.size()));
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        if (show_imgui)
+        {
+            ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f));
+            if (ImGui::Begin("Display", nullptr, ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_NoCollapse))
+            {
+                if (has_fps_sample)
+                    ImGui::Text("FPS: %.1f", FPS.get());
+                else
+                    ImGui::TextUnformatted("FPS: measuring...");
+                ImGui::Text("VSync: %s (V)", is_vsync_on ? "on" : "off");
+                const bool cursor_captured =
+                    glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+                ImGui::TextUnformatted(cursor_captured
+                    ? "Right-click or Esc to release cursor"
+                    : "Left-click to capture cursor");
+                ImGui::TextUnformatted("D toggles this panel");
+            }
+            ImGui::End();
+        }
+        ImGui::Render();
+        if (show_imgui)
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         
         /* Swap front and back buffers */
         glfwSwapBuffers(window);
@@ -413,6 +472,7 @@ int App::run()
         FPS.update();
         if (FPS.is_updated())
         {
+            has_fps_sample = true;
             std::string title = "OpenGL - FPS: " + std::to_string(static_cast<int>(FPS.get()));
             glfwSetWindowTitle(window, title.c_str());
         }
@@ -483,6 +543,15 @@ App::~App()
     if (window)
     {
         glfwMakeContextCurrent(window);
+        if (imgui_context)
+        {
+            ImGui::SetCurrentContext(imgui_context);
+            if (ImGui::GetIO().BackendRendererUserData)
+                ImGui_ImplOpenGL3_Shutdown();
+            if (ImGui::GetIO().BackendPlatformUserData)
+                ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext(imgui_context);
+        }
         if (VAO_ID) glDeleteVertexArrays(1, &VAO_ID);
         if (VBO_ID) glDeleteBuffers(1, &VBO_ID);
         if (shader_prog_ID) glDeleteProgram(shader_prog_ID);
