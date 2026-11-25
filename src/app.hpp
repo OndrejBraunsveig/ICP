@@ -3,11 +3,14 @@
 #include <optional>
 #include <atomic>
 #include <memory>
+#include <stop_token>
+#include <vector>
 #include <opencv2/core.hpp>
 #include <opencv2/objdetect/face.hpp>
 #include <opencv2/videoio.hpp>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#include "assets.hpp"
 
 class App {
     public:
@@ -21,6 +24,7 @@ class App {
     bool init_camera();
     void run_camera();
     void print_GLEW_info();
+    bool init_assets();
     std::optional<cv::Point2f> find_face(const cv::Mat& frame);
     void tracker_thread(cv::VideoCapture & capture);
     void draw_cross_normalized(
@@ -47,6 +51,20 @@ class App {
         NormalizedCoordinates{0.0f, 0.0f}};
             
     cv::Ptr<cv::FaceDetectorYN> face_detector;
+
+    //new GL stuff
+    GLFWwindow* window = nullptr;
+
+    GLuint shader_prog_ID{ 0 };
+    GLuint VBO_ID{ 0 };
+    GLuint VAO_ID{ 0 };
+    
+    std::vector<vertex> triangle_vertices =
+    {
+    	{{0.0f,  0.5f,  0.0f}},
+    	{{0.5f, -0.5f,  0.0f}},
+    	{{-0.5f, -0.5f,  0.0f}}
+    };
    
     //Callbacks
     static void error_callback(int error, const char* description);

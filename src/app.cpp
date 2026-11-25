@@ -1,3 +1,5 @@
+#include "app.hpp"
+
 #include <thread>
 #include <optional>
 #include <atomic>
@@ -5,15 +7,41 @@
 #include <algorithm>
 #include <cstdlib>
 #include <chrono>
+#include <stack>
+#include <random>
 #include <iostream>
 #include <opencv2/opencv.hpp>
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <string>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include "fps_meter.hpp"
-#include "app.hpp"
+#include "assets.hpp"
 
-GLFWwindow* window;
+namespace {
+GLuint compile_shader(GLenum type, const char* source)
+{
+    const GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+
+    GLint compiled = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (compiled == GL_TRUE)
+        return shader;
+
+    char log[1024]{};
+    glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+    std::cerr << "Triangle shader compilation failed: " << log << '\n';
+    glDeleteShader(shader);
+    return 0;
+}
+}
+
 bool App::init_camera(){
     constexpr const char* model_path =
         "resources/face_detection_yunet_2023mar.onnx";
@@ -114,11 +142,6 @@ void App::run_camera(){
 void App::error_callback(int error, const char* description)
 {
     fprintf(stderr, "Error: %s\n", description);
-}
-static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 void APIENTRY App::gl_debug_callback(
     GLenum source,
@@ -265,8 +288,7 @@ bool App::init()
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK)
     {
-        glfwDestroyWindow(window);
-        glfwTerminate();
+        std::cerr << "Could not initialize GLEW.\n";
         return false;
     }
     //Allow OpenGL debug output
@@ -289,20 +311,97 @@ bool App::init()
     //print glew info of the current window
     print_GLEW_info();
     
+    return init_assets();
+}
+
+bool App::init_assets()
+{
+    constexpr auto vertex_source = R"(#version 460 core
+layout(location = 0) in vec3 position;
+uniform mat4 transform;
+void main()
+{
+    gl_Position = transform * vec4(position, 1.0);
+}
+)";
+    constexpr auto fragment_source = R"(#version 460 core
+out vec4 color;
+void main()
+{
+    color = vec4(1.0, 1.0, 1.0, 1.0);
+}
+)";
+
+    const GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, vertex_source);
+    const GLuint fragment_shader = compile_shader(GL_FRAGMENT_SHADER, fragment_source);
+    if (!vertex_shader || !fragment_shader)
+    {
+        if (vertex_shader) glDeleteShader(vertex_shader);
+        if (fragment_shader) glDeleteShader(fragment_shader);
+        return false;
+    }
+
+    shader_prog_ID = glCreateProgram();
+    glAttachShader(shader_prog_ID, vertex_shader);
+    glAttachShader(shader_prog_ID, fragment_shader);
+    glLinkProgram(shader_prog_ID);
+    glDetachShader(shader_prog_ID, vertex_shader);
+    glDetachShader(shader_prog_ID, fragment_shader);
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(shader_prog_ID, GL_LINK_STATUS, &linked);
+    if (linked != GL_TRUE)
+    {
+        char log[1024]{};
+        glGetProgramInfoLog(shader_prog_ID, sizeof(log), nullptr, log);
+        std::cerr << "Triangle shader program linking failed: " << log << '\n';
+        return false;
+    }
+
+    glCreateBuffers(1, &VBO_ID);
+    glNamedBufferData(VBO_ID, triangle_vertices.size() * sizeof(vertex),
+                      triangle_vertices.data(), GL_STATIC_DRAW);
+
+    glCreateVertexArrays(1, &VAO_ID);
+    glVertexArrayVertexBuffer(VAO_ID, 0, VBO_ID, 0, sizeof(vertex));
+    glVertexArrayAttribFormat(VAO_ID, 0, 3, GL_FLOAT, GL_FALSE, offsetof(vertex, position));
+    glVertexArrayAttribBinding(VAO_ID, 0, 0);
+    glEnableVertexArrayAttrib(VAO_ID, 0);
+
+    glClearColor(0.08f, 0.09f, 0.12f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
     return true;
 }
 int App::run()
 {
     fps_meter FPS;
+    const GLint transform_location = glGetUniformLocation(shader_prog_ID, "transform");
+    const auto model_view = glm::rotate(
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -2.0f)),
+        glm::radians(20.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     /* Loop until the user closes the window */
     while (!glfwWindowShouldClose(window))
     {
-        /* Render here */
-        glClear(GL_COLOR_BUFFER_BIT);
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+        if (width == 0 || height == 0)
+        {
+            glfwWaitEvents();
+            FPS.reset();
+            continue;
+        }
 
-        /* ... more draw-calls ... */
-        /* ... */
-        /* ... */
+        glViewport(0, 0, width, height);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        const glm::mat4 transform = glm::perspective(
+            glm::radians(45.0f), static_cast<float>(width) / height, 0.1f, 10.0f)
+            * model_view;
+        glUseProgram(shader_prog_ID);
+        glUniformMatrix4fv(transform_location, 1, GL_FALSE, glm::value_ptr(transform));
+        glBindVertexArray(VAO_ID);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangle_vertices.size()));
         
         /* Swap front and back buffers */
         glfwSwapBuffers(window);
@@ -319,7 +418,6 @@ int App::run()
         }
     }
 
-    glfwTerminate();
     return 0;
 }
 
@@ -382,6 +480,16 @@ std::optional<cv::Point2f> App::find_face(const cv::Mat& frame)
 
 App::~App()
 {
+    if (window)
+    {
+        glfwMakeContextCurrent(window);
+        if (VAO_ID) glDeleteVertexArrays(1, &VAO_ID);
+        if (VBO_ID) glDeleteBuffers(1, &VBO_ID);
+        if (shader_prog_ID) glDeleteProgram(shader_prog_ID);
+        glfwDestroyWindow(window);
+        glfwTerminate();
+    }
+
     if (capture.isOpened())
         capture.release();
 
