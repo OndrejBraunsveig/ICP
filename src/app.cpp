@@ -196,10 +196,74 @@ void App::glfw_key_callback(GLFWwindow* window, int key, int scancode, int actio
     case GLFW_KEY_D:
         app->show_imgui = !app->show_imgui;
         break;
+    case GLFW_KEY_F11:
+        app->fullscreen_toggle_requested = true;
+        break;
     default:
         break;
     }
 }
+
+void App::toggle_fullscreen()
+{
+    if (glfwGetWindowMonitor(window))
+    {
+        const auto [x, y, width, height] = windowed_bounds;
+        glfwSetWindowMonitor(window, nullptr, x, y, width, height, GLFW_DONT_CARE);
+        if (windowed_maximized && !glfwGetWindowMonitor(window))
+            glfwMaximizeWindow(window);
+    }
+    else
+    {
+        WindowBounds bounds{};
+        glfwGetWindowPos(window, &bounds.x, &bounds.y);
+        glfwGetWindowSize(window, &bounds.width, &bounds.height);
+
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        long long largest_overlap = 0;
+        int monitor_count = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&monitor_count);
+        for (int i = 0; i < monitor_count; ++i)
+        {
+            const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
+            if (!mode)
+                continue;
+
+            int x, y;
+            glfwGetMonitorPos(monitors[i], &x, &y);
+            const int overlap_width = std::max(0,
+                std::min(bounds.x + bounds.width, x + mode->width) - std::max(bounds.x, x));
+            const int overlap_height = std::max(0,
+                std::min(bounds.y + bounds.height, y + mode->height) - std::max(bounds.y, y));
+            const long long overlap = static_cast<long long>(overlap_width) * overlap_height;
+            if (overlap > largest_overlap)
+            {
+                largest_overlap = overlap;
+                monitor = monitors[i];
+            }
+        }
+
+        const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+        if (!mode)
+            return;
+
+        windowed_maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE;
+        if (windowed_maximized)
+        {
+            // Save the normal bounds so the user can still unmaximize after returning.
+            glfwRestoreWindow(window);
+            glfwGetWindowPos(window, &bounds.x, &bounds.y);
+            glfwGetWindowSize(window, &bounds.width, &bounds.height);
+        }
+        windowed_bounds = bounds;
+        glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+        if (windowed_maximized && !glfwGetWindowMonitor(window))
+            glfwMaximizeWindow(window);
+    }
+
+    glfwSwapInterval(is_vsync_on ? 1 : 0);
+}
+
 void App::print_GLEW_info()
 {
     const GLubyte* vendor = (const GLubyte*)glGetString(GL_VENDOR);
@@ -415,6 +479,12 @@ int App::run()
     /* Loop until the user closes the window */
     while (!glfwWindowShouldClose(window))
     {
+        if (fullscreen_toggle_requested)
+        {
+            fullscreen_toggle_requested = false;
+            toggle_fullscreen();
+        }
+
         int width, height;
         glfwGetFramebufferSize(window, &width, &height);
         if (width == 0 || height == 0)
@@ -455,6 +525,7 @@ int App::run()
                     ? "Right-click or Esc to release cursor"
                     : "Left-click to capture cursor");
                 ImGui::TextUnformatted("D toggles this panel");
+                ImGui::TextUnformatted("F11 toggles fullscreen");
             }
             ImGui::End();
         }

@@ -28,6 +28,7 @@ class App {
     void print_GLEW_info();
     bool init_assets();
     bool init_imgui();
+    void toggle_fullscreen();
     std::optional<cv::Point2f> find_face(const cv::Mat& frame);
     void tracker_thread(cv::VideoCapture & capture);
     void draw_cross_normalized(
@@ -59,6 +60,14 @@ class App {
     GLFWwindow* window = nullptr;
     ImGuiContext* imgui_context = nullptr;
     bool show_imgui{true};
+    bool fullscreen_toggle_requested{false};
+
+    struct WindowBounds
+    {
+        int x, y, width, height;
+    };
+    WindowBounds windowed_bounds{};
+    bool windowed_maximized{false};
 
     GLuint shader_prog_ID{ 0 };
     GLuint VBO_ID{ 0 };
